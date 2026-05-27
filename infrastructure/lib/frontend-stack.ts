@@ -1,12 +1,24 @@
 import * as cdk from 'aws-cdk-lib';
 import { Construct } from 'constructs';
+import * as acm from 'aws-cdk-lib/aws-certificatemanager';
 import * as cloudfront from 'aws-cdk-lib/aws-cloudfront';
 import * as iam from 'aws-cdk-lib/aws-iam';
+import * as route53 from 'aws-cdk-lib/aws-route53';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 
 export class FrontendStack extends cdk.Stack {
 	constructor(scope: Construct, id: string, props?: cdk.StackProps) {
 		super(scope, id, props);
+
+		const customDomainName = 'home.bellavista.sebastianzafra.com';
+		const hostedZone = route53.HostedZone.fromLookup(this, 'BellavistaHostedZone', {
+			domainName: 'bellavista.sebastianzafra.com',
+		});
+
+		const certificate = new acm.Certificate(this, 'BellavistaFrontendCertificate', {
+			domainName: customDomainName,
+			validation: acm.CertificateValidation.fromDns(hostedZone),
+		});
 
 		const siteBucket = new s3.Bucket(this, 'BellavistaRestauranteBucket', {
 			bucketName: 'bellavista-restaurante',
@@ -31,6 +43,7 @@ export class FrontendStack extends cdk.Stack {
 			distributionConfig: {
 				enabled: true,
 				defaultRootObject: 'index.html',
+				aliases: [customDomainName],
 				origins: [
 					{
 						id: 'BellavistaRestauranteS3Origin',
@@ -58,7 +71,9 @@ export class FrontendStack extends cdk.Stack {
 					},
 				},
 				viewerCertificate: {
-					cloudFrontDefaultCertificate: true,
+					acmCertificateArn: certificate.certificateArn,
+					sslSupportMethod: 'sni-only',
+					minimumProtocolVersion: 'TLSv1.2_2021',
 				},
 			},
 		});
@@ -86,6 +101,17 @@ export class FrontendStack extends cdk.Stack {
 
 		new cdk.CfnOutput(this, 'FrontendDistributionId', {
 			value: distribution.ref,
+		});
+
+		new route53.CfnRecordSet(this, 'BellavistaFrontendAliasRecord', {
+			hostedZoneId: hostedZone.hostedZoneId,
+			name: customDomainName,
+			type: 'A',
+			aliasTarget: {
+				hostedZoneId: 'Z2FDTNDATAQYW2',
+				dnsName: distribution.attrDomainName,
+				evaluateTargetHealth: false,
+			},
 		});
 	}
 }
