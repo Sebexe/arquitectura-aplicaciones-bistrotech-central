@@ -1,0 +1,128 @@
+name: frontend-pipeline
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+  CDK_DEFAULT_REGION: us-east-1
+
+jobs:
+  deploy-frontend:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Prepare backend Lambda asset
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf .build/backend-lambda
+          mkdir -p .build/backend-lambda
+
+          cp -R app/backend/app .build/backend-lambda/
+          cp app/backend/requirements.txt .build/backend-lambda/
+
+          python -m pip install --upgrade pip
+          python -m pip install -r .build/backend-lambda/requirements.txt -t .build/backend-lambda
+
+          cat > .build/backend-lambda/run.sh <<'EOF'
+          #!/bin/bash
+          export PYTHONPATH=$PYTHONPATH:/var/task
+          exec python3 -m uvicorn app.main:app --host 0.0.0.0 --port 8000
+          EOF
+
+          chmod +x .build/backend-lambda/run.sh
+
+      - name: Install CDK dependencies
+        working-directory: infrastructure
+        run: npm ci
+
+      - name: Build CDK app
+        working-directory: infrastructure
+        run: npm run build
+
+      - name: Deploy backend stack
+        working-directory: infrastructure
+        run: npx cdk deploy BackendStack --require-approval never -c backendAssetDir=../.build/backend-lambda
+
+      - name: Read backend function URL
+        shell: bash
+        run: |
+          set -euo pipefail
+          BACKEND_URL=$(aws cloudformation describe-stacks \
+            --stack-name BackendStack \
+            --query "Stacks[0].Outputs[?OutputKey=='BackendFunctionUrl'].OutputValue" \
+            --output text)
+
+          echo "VITE_API_BASE_URL=${BACKEND_URL%/}/api" >> "$GITHUB_ENV"
+
+      - name: Install frontend dependencies
+        working-directory: app/frontend
+        run: npm ci
+
+      - name: Build frontend
+        working-directory: app/frontend
+        run: npm run build
+
+      - name: Deploy frontend stack
+        working-directory: infrastructure
+        run: npx cdk deploy FrontendStack --require-approval never
+
+      - name: Read frontend stack outputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          FRONTEND_BUCKET=$(aws cloudformation describe-stacks \
+            --stack-name FrontendStack \
+            --query "Stacks[0].Outputs[?OutputKey=='FrontendBucketName'].OutputValue" \
+            --output text)
+
+          FRONTEND_DISTRIBUTION_ID=$(aws cloudformation describe-stacks \
+            --stack-name FrontendStack \
+            --query "Stacks[0].Outputs[?OutputKey=='FrontendDistributionId'].OutputValue" \
+            --output text)
+
+          echo "FRONTEND_BUCKET=${FRONTEND_BUCKET}" >> "$GITHUB_ENV"
+          echo "FRONTEND_DISTRIBUTION_ID=${FRONTEND_DISTRIBUTION_ID}" >> "$GITHUB_ENV"
+
+      - name: Sync frontend assets to S3
+        shell: bash
+        run: |
+          set -euo pipefail
+          aws s3 sync app/frontend/dist "s3://${FRONTEND_BUCKET}" --delete
+
+      - name: Invalidate CloudFront distribution
+        shell: bash
+        run: |
+          set -euo pipefail
+          aws cloudfront create-invalidation \
+            --distribution-id "$FRONTEND_DISTRIBUTION_ID" \
+            --paths "/*"
