@@ -64,6 +64,20 @@ export class FrontendStack extends cdk.Stack {
 					  originRequestPolicyId: cloudfront.OriginRequestPolicy.CORS_S3_ORIGIN.originRequestPolicyId,
 				},
 				priceClass: 'PriceClass_100',
+				customErrorResponses: [
+					{
+						errorCode: 403,
+						responseCode: 200,
+						responsePagePath: '/index.html',
+						errorCachingMinTtl: 0,
+					},
+					{
+						errorCode: 404,
+						responseCode: 200,
+						responsePagePath: '/index.html',
+						errorCachingMinTtl: 0,
+					},
+				],
 				restrictions: {
 					geoRestriction: {
 						restrictionType: 'none',
