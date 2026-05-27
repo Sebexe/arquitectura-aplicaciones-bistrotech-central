@@ -30,6 +30,28 @@ jobs:
           role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
           aws-region: ${{ env.AWS_REGION }}
 
+      - name: Check backend function URL output
+        id: check_backend_output
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          BACKEND_FUNCTION_URL=""
+          if BACKEND_FUNCTION_URL=$(aws cloudformation describe-stacks \
+            --stack-name BackendStack \
+            --query "Stacks[0].Outputs[?OutputKey=='BackendFunctionUrl'].OutputValue | [0]" \
+            --output text 2>/dev/null); then
+            if [[ "$BACKEND_FUNCTION_URL" == "None" ]]; then
+              BACKEND_FUNCTION_URL=""
+            fi
+          fi
+
+          if [[ -n "$BACKEND_FUNCTION_URL" ]]; then
+            echo "should_deploy_backend=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "should_deploy_backend=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
@@ -41,6 +63,7 @@ jobs:
           python-version: "3.13"
 
       - name: Prepare backend Lambda asset
+        if: steps.check_backend_output.outputs.should_deploy_backend == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -62,14 +85,17 @@ jobs:
           chmod +x .build/backend-lambda/run.sh
 
       - name: Install CDK dependencies
+        if: steps.check_backend_output.outputs.should_deploy_backend == 'true'
         working-directory: infrastructure
         run: npm ci
 
       - name: Build CDK app
+        if: steps.check_backend_output.outputs.should_deploy_backend == 'true'
         working-directory: infrastructure
         run: npm run build
 
       - name: Deploy backend stack
+        if: steps.check_backend_output.outputs.should_deploy_backend == 'true'
         working-directory: infrastructure
         run: npx cdk deploy BackendStack --require-approval never -c backendAssetDir=../.build/backend-lambda
 
