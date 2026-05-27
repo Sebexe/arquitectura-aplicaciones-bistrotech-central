@@ -73,6 +73,11 @@ export class BackendStack extends cdk.Stack {
 
     const backendFunctionUrl = backendLambda.addFunctionUrl({
       authType: lambda.FunctionUrlAuthType.NONE,
+      cors: {
+        allowedOrigins: ['*'],
+        allowedMethods: [lambda.HttpMethod.ALL],
+        allowedHeaders: ['*'],
+      },
     });
 
     new cdk.CfnOutput(this, 'BackendFunctionUrl', {
