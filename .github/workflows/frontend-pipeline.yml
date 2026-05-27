@@ -62,6 +62,14 @@ jobs:
         with:
           python-version: "3.13"
 
+      - name: Install CDK dependencies
+        working-directory: infrastructure
+        run: npm ci
+
+      - name: Build CDK app
+        working-directory: infrastructure
+        run: npm run build
+
       - name: Prepare backend Lambda asset
         if: steps.check_backend_output.outputs.should_deploy_backend == 'true'
         shell: bash
@@ -83,16 +91,6 @@ jobs:
           EOF
 
           chmod +x .build/backend-lambda/run.sh
-
-      - name: Install CDK dependencies
-        if: steps.check_backend_output.outputs.should_deploy_backend == 'true'
-        working-directory: infrastructure
-        run: npm ci
-
-      - name: Build CDK app
-        if: steps.check_backend_output.outputs.should_deploy_backend == 'true'
-        working-directory: infrastructure
-        run: npm run build
 
       - name: Deploy backend stack
         if: steps.check_backend_output.outputs.should_deploy_backend == 'true'
