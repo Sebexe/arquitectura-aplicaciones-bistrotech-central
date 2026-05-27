@@ -1,0 +1,6 @@
+[submodule "app/backend"]
+	path = app/backend
+	url = https://github.com/LucasELeiva/Back_RestaurantIA
+[submodule "app/ml"]
+	path = app/ml
+	url = https://github.com/fst037/MLOps-demo-RestauranteIA
