@@ -87,4 +87,3 @@ export class BackendStack extends cdk.Stack {
   }
 }
 
-/
