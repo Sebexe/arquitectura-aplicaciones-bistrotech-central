@@ -1,0 +1,50 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Data y modelos (no versionar artefactos pesados)
+data/raw/
+data/processed/
+models/
+
+# Terraform — IMPORTANTE: contienen estado e información sensible
+terraform/terraform.tfvars
+terraform/terraform.tfstate
+terraform/terraform.tfstate.backup
+terraform/terraform.tfstate*
+terraform/.terraform/
+terraform/.terraform.lock.hcl
+terraform/tfplan
+terraform/modules/lambda/lambda_src/*.zip
+
+# AWS
+.aws/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db

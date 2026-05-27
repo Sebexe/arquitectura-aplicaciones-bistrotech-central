@@ -2,6 +2,7 @@
 import * as cdk from 'aws-cdk-lib';
 import { BackendStack } from '../lib/backend-stack';
 import { FrontendStack } from '../lib/frontend-stack';
+import { MachineLearningStack } from '../lib/machine-learning-stack';
 
 declare const process: {
 	env: {
@@ -19,3 +20,5 @@ const env = {
 new BackendStack(app, 'BackendStack', { env });
 
 new FrontendStack(app, 'FrontendStack', { env });
+
+new MachineLearningStack(app, 'MachineLearningStack', { env });

@@ -1,0 +1,79 @@
+name: ml-pipeline
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'app/ml-native/**'
+      - 'infrastructure/lib/machine-learning-stack.ts'
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+  CDK_DEFAULT_REGION: us-east-1
+
+jobs:
+  deploy-ml-infra:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install CDK dependencies
+        working-directory: infrastructure
+        run: npm ci
+
+      - name: Deploy ML Infrastructure Stack
+        working-directory: infrastructure
+        run: npx cdk deploy MachineLearningStack --require-approval never --outputs-file cdk-outputs.json
+
+      # Leer outputs del CDK para pasarlos al pipeline de ML
+      - name: Extract CDK outputs
+        id: cdk-outputs
+        working-directory: infrastructure
+        run: |
+          BUCKET=$(jq -r '.MachineLearningStack.MlBucketName' cdk-outputs.json)
+          ROLE=$(jq -r '.MachineLearningStack.SageMakerRoleArn' cdk-outputs.json)
+          echo "S3_BUCKET=$BUCKET" >> $GITHUB_ENV
+          echo "SAGEMAKER_ROLE_ARN=$ROLE" >> $GITHUB_ENV
+
+      # Configuración de Python para ejecutar y verificar los tests del pipeline de ML
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install ML requirements
+        working-directory: app/ml-native
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run ML unit tests
+        working-directory: app/ml-native
+        run: pytest tests/ -v
+
+      # Ejecuta el pipeline completo: entrena con datos simulados y hace upsert
+      # del pipeline de reentrenamiento en SageMaker (usa SAGEMAKER_ROLE_ARN y S3_BUCKET del entorno)
+      - name: Run pipeline & register SageMaker retraining pipeline
+        working-directory: app/ml-native
+        env:
+          AWS_REGION: ${{ env.AWS_REGION }}
+          SAGEMAKER_ROLE_ARN: ${{ env.SAGEMAKER_ROLE_ARN }}
+          S3_BUCKET: ${{ env.S3_BUCKET }}
+        run: python run_pipeline.py
