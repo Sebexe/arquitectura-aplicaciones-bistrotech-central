@@ -66,8 +66,8 @@ def build_pipeline():
         from sagemaker.inputs import TrainingInput
     except ImportError as exc:
         raise ImportError(
-            "El SDK de SageMaker no está instalado. "
-            "Agrégalo con: pip install sagemaker"
+            f"Error al importar el SDK de SageMaker: {exc}. "
+            "Asegúrate de instalar: pip install sagemaker setuptools"
         ) from exc
 
     sess = sagemaker.Session()
