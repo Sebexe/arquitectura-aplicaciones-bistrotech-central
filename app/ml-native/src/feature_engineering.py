@@ -5,6 +5,8 @@ X no contiene ninguna columna de feedback (anti-leakage).
 id_mozo no está en X porque no es conocido al momento de la inferencia
 para Modelo A (es lo que se recomienda); train_modelo_a lo agrega internamente.
 """
+from __future__ import annotations
+
 import json
 import os
 import logging

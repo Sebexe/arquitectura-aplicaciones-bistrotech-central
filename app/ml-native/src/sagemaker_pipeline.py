@@ -14,6 +14,7 @@ Variables de entorno requeridas:
   AWS_REGION          — Región de AWS (default: us-east-1)
   SM_INSTANCE_TYPE    — Tipo de instancia para processing/training (default: ml.m5.large)
 """
+from __future__ import annotations
 
 import logging
 import os

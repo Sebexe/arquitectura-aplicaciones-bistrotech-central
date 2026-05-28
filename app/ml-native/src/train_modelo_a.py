@@ -5,6 +5,8 @@ El modelo predice el propina_rate esperado dado el perfil del comensal
 y el mozo asignado. En inferencia se itera sobre los 8 mozos posibles
 para encontrar el que maximiza el propina_rate esperado.
 """
+from __future__ import annotations
+
 import os
 import json
 import logging

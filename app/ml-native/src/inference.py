@@ -4,6 +4,8 @@ Funciones de inferencia para BistroTech.
 Expone predict(contexto_mesa) que devuelve el formato exacto de la API
 definido en el README: mozos_recomendados + recomendaciones_por_comensal.
 """
+from __future__ import annotations
+
 import json
 import logging
 import os
