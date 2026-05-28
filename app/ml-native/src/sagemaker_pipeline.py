@@ -68,10 +68,11 @@ def build_pipeline():
         import sagemaker
         from sagemaker.workflow.pipeline import Pipeline
         from sagemaker.workflow.steps import ProcessingStep, TrainingStep
-        from sagemaker.workflow.model_step import ModelStep
+        from sagemaker.workflow.step_collections import RegisterModel
         from sagemaker.workflow.parameters import ParameterString
         from sagemaker.processing import ScriptProcessor, ProcessingInput, ProcessingOutput
         from sagemaker.estimator import Estimator
+        from sagemaker.model import Model
         from sagemaker.inputs import TrainingInput
     except ImportError as exc:
         raise ImportError(
@@ -162,7 +163,15 @@ def build_pipeline():
     )
 
     # ── Step 3: Model Registry ───────────────────────────────────────────────
-    register_args = estimator.register(
+    trained_model = Model(
+        image_uri=_XGB_IMAGE,
+        model_data=step_train.properties.ModelArtifacts.S3ModelArtifacts,
+        role=SAGEMAKER_ROLE_ARN,
+        sagemaker_session=sess,
+    )
+    step_register = RegisterModel(
+        name="RegisterModeloA",
+        model=trained_model,
         content_types=["application/json", "text/csv"],
         response_types=["application/json"],
         inference_instances=["ml.t3.medium", "ml.m5.large"],
@@ -170,10 +179,6 @@ def build_pipeline():
         model_package_group_name=MODEL_PACKAGE_GROUP_NAME,
         approval_status=model_approval_status,
         description="BistroTech ml-native Modelo A (XGBoost) entrenado por SageMaker Pipeline.",
-    )
-    step_register = ModelStep(
-        name="RegisterModeloA",
-        step_args=register_args,
         depends_on=[step_train],
     )
 
