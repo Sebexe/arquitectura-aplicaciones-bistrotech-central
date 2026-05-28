@@ -24,7 +24,7 @@ PIPELINE_NAME = "bistrotech-native-retrain-pipeline"
 SAGEMAKER_ROLE_ARN = os.environ.get("SAGEMAKER_ROLE_ARN", "")
 S3_BUCKET = os.environ.get("S3_BUCKET", "")
 AWS_REGION = os.environ.get("AWS_REGION", "us-east-1")
-INSTANCE_TYPE = os.environ.get("SM_INSTANCE_TYPE", "ml.m5.large")
+INSTANCE_TYPE = os.environ.get("SM_INSTANCE_TYPE", "ml.t3.medium")
 
 # Imágenes ECR gestionadas por AWS para sklearn y xgboost
 _SKLEARN_IMAGE = f"683313688378.dkr.ecr.{AWS_REGION}.amazonaws.com/sagemaker-scikit-learn:1.2-1-cpu-py3"
