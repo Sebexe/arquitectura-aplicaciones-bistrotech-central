@@ -81,10 +81,6 @@ export class BackendStack extends cdk.Stack {
       },
     });
 
-    const backendFunctionUrl = backendLambda.addFunctionUrl({
-      authType: lambda.FunctionUrlAuthType.NONE,
-    });
-
     const hostedZone = route53.HostedZone.fromLookup(this, 'BackendHostedZone', {
       domainName: hostedZoneDomainName,
     });
@@ -132,10 +128,6 @@ export class BackendStack extends cdk.Stack {
           apiDomain.regionalHostedZoneId,
         ),
       ),
-    });
-
-    new cdk.CfnOutput(this, 'BackendFunctionUrl', {
-      value: backendFunctionUrl.url,
     });
 
     new cdk.CfnOutput(this, 'BackendApiUrl', {

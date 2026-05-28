@@ -10,6 +10,7 @@ permissions:
 env:
   AWS_REGION: us-east-1
   CDK_DEFAULT_REGION: us-east-1
+  BACKEND_URL: https://api.bellavista.sebastianzafra.com/
 
 jobs:
   deploy-frontend:
@@ -33,23 +34,23 @@ jobs:
           role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Check backend function URL output
+      - name: Check backend API custom domain output
         id: check_backend_output
         shell: bash
         run: |
           set -euo pipefail
 
-          BACKEND_FUNCTION_URL=""
-          if BACKEND_FUNCTION_URL=$(aws cloudformation describe-stacks \
+          BACKEND_API_URL=""
+          if BACKEND_API_URL=$(aws cloudformation describe-stacks \
             --stack-name BackendStack \
-            --query "Stacks[0].Outputs[?OutputKey=='BackendFunctionUrl'].OutputValue | [0]" \
+            --query "Stacks[0].Outputs[?OutputKey=='BackendApiCustomDomainUrl'].OutputValue | [0]" \
             --output text 2>/dev/null); then
-            if [[ "$BACKEND_FUNCTION_URL" == "None" ]]; then
-              BACKEND_FUNCTION_URL=""
+            if [[ "$BACKEND_API_URL" == "None" ]]; then
+              BACKEND_API_URL=""
             fi
           fi
 
-          if [[ -n "$BACKEND_FUNCTION_URL" ]]; then
+          if [[ -n "$BACKEND_API_URL" ]]; then
             echo "should_deploy_backend=false" >> "$GITHUB_OUTPUT"
           else
             echo "should_deploy_backend=true" >> "$GITHUB_OUTPUT"
@@ -100,15 +101,10 @@ jobs:
         working-directory: infrastructure
         run: npx cdk deploy BackendStack --require-approval never -c backendAssetDir=../.build/backend-lambda
 
-      - name: Read backend function URL
+      - name: Set frontend backend URL
         shell: bash
         run: |
           set -euo pipefail
-          BACKEND_URL=$(aws cloudformation describe-stacks \
-            --stack-name BackendStack \
-            --query "Stacks[0].Outputs[?OutputKey=='BackendFunctionUrl'].OutputValue" \
-            --output text)
-
           echo "VITE_API_BASE_URL=${BACKEND_URL%/}/api" >> "$GITHUB_ENV"
 
       - name: Install frontend dependencies
