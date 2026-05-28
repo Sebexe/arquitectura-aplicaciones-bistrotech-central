@@ -30,6 +30,10 @@ PROCESSING_INSTANCE_TYPE = os.environ.get("SM_PROCESSING_INSTANCE_TYPE", "ml.t3.
 
 # Para entrenamiento (Paso 2) probamos la m5.xlarge que suele tener cuota libre
 TRAINING_INSTANCE_TYPE = os.environ.get("SM_TRAINING_INSTANCE_TYPE", "ml.m5.xlarge")
+MODEL_PACKAGE_GROUP_NAME = os.environ.get(
+    "SM_MODEL_PACKAGE_GROUP_NAME", "bistrotech-native-modelos"
+)
+MODEL_APPROVAL_STATUS = os.environ.get("SM_MODEL_APPROVAL_STATUS", "PendingManualApproval")
 # Imágenes ECR gestionadas por AWS para sklearn y xgboost
 _SKLEARN_IMAGE = f"683313688378.dkr.ecr.{AWS_REGION}.amazonaws.com/sagemaker-scikit-learn:1.2-1-cpu-py3"
 _XGB_IMAGE = f"683313688378.dkr.ecr.{AWS_REGION}.amazonaws.com/sagemaker-xgboost:1.7-1"
@@ -64,6 +68,7 @@ def build_pipeline():
         import sagemaker
         from sagemaker.workflow.pipeline import Pipeline
         from sagemaker.workflow.steps import ProcessingStep, TrainingStep
+        from sagemaker.workflow.model_step import ModelStep
         from sagemaker.workflow.parameters import ParameterString
         from sagemaker.processing import ScriptProcessor, ProcessingInput, ProcessingOutput
         from sagemaker.estimator import Estimator
@@ -80,6 +85,10 @@ def build_pipeline():
     input_data_uri = ParameterString(
         name="InputDataUri",
         default_value=f"s3://{S3_BUCKET}/data/raw/reservas.csv",
+    )
+    model_approval_status = ParameterString(
+        name="ModelApprovalStatus",
+        default_value=MODEL_APPROVAL_STATUS,
     )
 
     # ── Step 1: Feature Engineering ──────────────────────────────────────────
@@ -152,10 +161,26 @@ def build_pipeline():
         depends_on=[step_features],
     )
 
+    # ── Step 3: Model Registry ───────────────────────────────────────────────
+    register_args = estimator.register(
+        content_types=["application/json", "text/csv"],
+        response_types=["application/json"],
+        inference_instances=["ml.t3.medium", "ml.m5.large"],
+        transform_instances=["ml.m5.large"],
+        model_package_group_name=MODEL_PACKAGE_GROUP_NAME,
+        approval_status=model_approval_status,
+        description="BistroTech ml-native Modelo A (XGBoost) entrenado por SageMaker Pipeline.",
+    )
+    step_register = ModelStep(
+        name="RegisterModeloA",
+        step_args=register_args,
+        depends_on=[step_train],
+    )
+
     pipeline = Pipeline(
         name=PIPELINE_NAME,
-        parameters=[input_data_uri],
-        steps=[step_features, step_train],
+        parameters=[input_data_uri, model_approval_status],
+        steps=[step_features, step_train, step_register],
         sagemaker_session=sess,
     )
     return pipeline
