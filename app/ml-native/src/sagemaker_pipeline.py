@@ -127,10 +127,11 @@ def build_pipeline():
         output_path=f"s3://{S3_BUCKET}/models/",
         sagemaker_session=sess,
         base_job_name="bistrotech-train",
-        # El entry_point apunta al script de entrenamiento nativo
-        entry_point="src/train_modelo_a.py",
-        # El directorio fuente incluye todos los módulos de src/
-        source_dir=".",
+        # En contenedores framework de SageMaker, entry_point debe ser relativo a source_dir
+        # para evitar resolución inválida del módulo (src/train_modelo_a).
+        entry_point="train_modelo_a.py",
+        # Incluye todos los módulos del paquete de entrenamiento.
+        source_dir="src",
         hyperparameters={
             "n-estimators": 300,
             "max-depth": 6,
