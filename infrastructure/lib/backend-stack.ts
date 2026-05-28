@@ -3,6 +3,11 @@ import { Construct } from 'constructs';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
+import * as acm from 'aws-cdk-lib/aws-certificatemanager';
+import * as apigatewayv2 from 'aws-cdk-lib/aws-apigatewayv2';
+import * as integrations from 'aws-cdk-lib/aws-apigatewayv2-integrations';
+import * as route53 from 'aws-cdk-lib/aws-route53';
+import * as targets from 'aws-cdk-lib/aws-route53-targets';
 import * as path from 'path';
 // import * as sqs from 'aws-cdk-lib/aws-sqs';
 
@@ -10,6 +15,11 @@ export class BackendStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
     const backendAssetDir = this.node.tryGetContext('backendAssetDir') ?? path.join(__dirname, '../../app/backend');
+    const hostedZoneDomainName = this.node.tryGetContext('hostedZoneDomainName') ?? 'bellavista.sebastianzafra.com';
+    const apiDomainName = this.node.tryGetContext('apiDomainName') ?? `api.${hostedZoneDomainName}`;
+    const apiRecordName = apiDomainName.endsWith(`.${hostedZoneDomainName}`)
+      ? apiDomainName.slice(0, -(hostedZoneDomainName.length + 1))
+      : apiDomainName;
 
     const mesasTable = new dynamodb.Table(this, 'MesasTable', {
       partitionKey: { name: 'id_mesa', type: dynamodb.AttributeType.NUMBER },
@@ -73,15 +83,67 @@ export class BackendStack extends cdk.Stack {
 
     const backendFunctionUrl = backendLambda.addFunctionUrl({
       authType: lambda.FunctionUrlAuthType.NONE,
-      cors: {
-        allowedOrigins: ['*'],
-        allowedMethods: [lambda.HttpMethod.ALL],
-        allowedHeaders: ['*'],
+    });
+
+    const hostedZone = route53.HostedZone.fromLookup(this, 'BackendHostedZone', {
+      domainName: hostedZoneDomainName,
+    });
+
+    const certificate = new acm.Certificate(this, 'BackendApiCertificate', {
+      domainName: apiDomainName,
+      validation: acm.CertificateValidation.fromDns(hostedZone),
+    });
+
+    const apiDomain = new apigatewayv2.DomainName(this, 'BackendApiDomain', {
+      domainName: apiDomainName,
+      certificate,
+    });
+
+    const backendApi = new apigatewayv2.HttpApi(this, 'BackendHttpApi', {
+      apiName: 'bistrotech-backend-api',
+      defaultDomainMapping: {
+        domainName: apiDomain,
       },
+    });
+
+    const backendIntegration = new integrations.HttpLambdaIntegration(
+      'BackendLambdaIntegration',
+      backendLambda,
+    );
+
+    backendApi.addRoutes({
+      path: '/',
+      methods: [apigatewayv2.HttpMethod.ANY],
+      integration: backendIntegration,
+    });
+
+    backendApi.addRoutes({
+      path: '/{proxy+}',
+      methods: [apigatewayv2.HttpMethod.ANY],
+      integration: backendIntegration,
+    });
+
+    new route53.ARecord(this, 'BackendApiAliasRecord', {
+      zone: hostedZone,
+      recordName: apiRecordName,
+      target: route53.RecordTarget.fromAlias(
+        new targets.ApiGatewayv2DomainProperties(
+          apiDomain.regionalDomainName,
+          apiDomain.regionalHostedZoneId,
+        ),
+      ),
     });
 
     new cdk.CfnOutput(this, 'BackendFunctionUrl', {
       value: backendFunctionUrl.url,
+    });
+
+    new cdk.CfnOutput(this, 'BackendApiUrl', {
+      value: backendApi.url ?? '',
+    });
+
+    new cdk.CfnOutput(this, 'BackendApiCustomDomainUrl', {
+      value: `https://${apiDomainName}`,
     });
 
     for (const table of [mesasTable, reservasTable, registrosTable, clientesHistoricoTable, segmentosReferenciaTable]) {
