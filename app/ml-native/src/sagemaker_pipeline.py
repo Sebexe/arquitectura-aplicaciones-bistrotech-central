@@ -33,7 +33,7 @@ TRAINING_INSTANCE_TYPE = os.environ.get("SM_TRAINING_INSTANCE_TYPE", "ml.m5.xlar
 MODEL_PACKAGE_GROUP_NAME = os.environ.get(
     "SM_MODEL_PACKAGE_GROUP_NAME", "bistrotech-native-modelos"
 )
-MODEL_APPROVAL_STATUS = os.environ.get("SM_MODEL_APPROVAL_STATUS", "PendingManualApproval")
+ENDPOINT_NAME = os.environ.get("SM_ENDPOINT_NAME", "bistrotech-native-endpoint")
 # Imágenes ECR gestionadas por AWS para sklearn y xgboost
 _SKLEARN_IMAGE = f"683313688378.dkr.ecr.{AWS_REGION}.amazonaws.com/sagemaker-scikit-learn:1.2-1-cpu-py3"
 _XGB_IMAGE = f"683313688378.dkr.ecr.{AWS_REGION}.amazonaws.com/sagemaker-xgboost:1.7-1"
@@ -68,12 +68,17 @@ def build_pipeline():
         import sagemaker
         from sagemaker.workflow.pipeline import Pipeline
         from sagemaker.workflow.steps import ProcessingStep, TrainingStep
+        from sagemaker.workflow.condition_step import ConditionStep
+        from sagemaker.workflow.conditions import ConditionLessThan, ConditionGreaterThan
+        from sagemaker.workflow.properties import PropertyFile
+        from sagemaker.workflow.functions import JsonGet
         from sagemaker.workflow.step_collections import RegisterModel
         from sagemaker.workflow.parameters import ParameterString
         from sagemaker.processing import ScriptProcessor, ProcessingInput, ProcessingOutput
         from sagemaker.estimator import Estimator
         from sagemaker.model import Model
         from sagemaker.inputs import TrainingInput
+        from sagemaker.model_metrics import MetricsSource, ModelMetrics
     except ImportError as exc:
         raise ImportError(
             f"Error al importar el SDK de SageMaker: {exc}. "
@@ -87,9 +92,9 @@ def build_pipeline():
         name="InputDataUri",
         default_value=f"s3://{S3_BUCKET}/data/raw/reservas.csv",
     )
-    model_approval_status = ParameterString(
-        name="ModelApprovalStatus",
-        default_value=MODEL_APPROVAL_STATUS,
+    endpoint_name = ParameterString(
+        name="EndpointName",
+        default_value=ENDPOINT_NAME,
     )
 
     # ── Step 1: Feature Engineering ──────────────────────────────────────────
@@ -162,12 +167,111 @@ def build_pipeline():
         depends_on=[step_features],
     )
 
-    # ── Step 3: Model Registry ───────────────────────────────────────────────
+    # ── Step 3: Baseline Metrics (modelo aprobado actual) ────────────────────
+    baseline_processor = ScriptProcessor(
+        image_uri=_SKLEARN_IMAGE,
+        command=["python3"],
+        instance_type=PROCESSING_INSTANCE_TYPE,
+        instance_count=1,
+        role=SAGEMAKER_ROLE_ARN,
+        sagemaker_session=sess,
+        base_job_name="bistrotech-baseline-metrics",
+    )
+    baseline_metrics_property = PropertyFile(
+        name="BaselineMetrics",
+        output_name="baseline",
+        path="baseline_metrics.json",
+    )
+    step_baseline = ProcessingStep(
+        name="GetBaselineMetrics",
+        processor=baseline_processor,
+        code="src/get_baseline_metrics.py",
+        outputs=[
+            ProcessingOutput(
+                source="/opt/ml/processing/output",
+                destination=f"s3://{S3_BUCKET}/metrics/baseline/",
+                output_name="baseline",
+            )
+        ],
+        job_arguments=[
+            "--model-package-group-name",
+            MODEL_PACKAGE_GROUP_NAME,
+            "--output-path",
+            "/opt/ml/processing/output/baseline_metrics.json",
+        ],
+        property_files=[baseline_metrics_property],
+        depends_on=[step_train],
+    )
+
+    # ── Step 4: Evaluación del candidato ─────────────────────────────────────
+    eval_processor = ScriptProcessor(
+        image_uri=_SKLEARN_IMAGE,
+        command=["python3"],
+        instance_type=PROCESSING_INSTANCE_TYPE,
+        instance_count=1,
+        role=SAGEMAKER_ROLE_ARN,
+        sagemaker_session=sess,
+        base_job_name="bistrotech-eval-candidate",
+    )
+    candidate_metrics_property = PropertyFile(
+        name="CandidateMetrics",
+        output_name="evaluation",
+        path="evaluation.json",
+    )
+    step_evaluate = ProcessingStep(
+        name="EvaluateCandidate",
+        processor=eval_processor,
+        code="src/evaluate_candidate.py",
+        inputs=[
+            ProcessingInput(
+                source=step_features.properties.ProcessingOutputConfig.Outputs[
+                    "processed-data"
+                ].S3Output.S3Uri,
+                destination="/opt/ml/processing/processed",
+                input_name="processed",
+            ),
+            ProcessingInput(
+                source=step_train.properties.ModelArtifacts.S3ModelArtifacts,
+                destination="/opt/ml/processing/model",
+                input_name="model-artifact",
+            ),
+        ],
+        outputs=[
+            ProcessingOutput(
+                source="/opt/ml/processing/evaluation",
+                destination=f"s3://{S3_BUCKET}/metrics/candidate/",
+                output_name="evaluation",
+            )
+        ],
+        job_arguments=[
+            "--model-artifact-path",
+            "/opt/ml/processing/model/model.tar.gz",
+            "--processed-dir",
+            "/opt/ml/processing/processed",
+            "--evaluation-output-path",
+            "/opt/ml/processing/evaluation/evaluation.json",
+            "--registry-output-path",
+            "/opt/ml/processing/evaluation/model_quality.json",
+        ],
+        property_files=[candidate_metrics_property],
+        depends_on=[step_baseline],
+    )
+
+    # ── Step 5: Registro condicional (solo si mejora) ───────────────────────
     trained_model = Model(
         image_uri=_XGB_IMAGE,
         model_data=step_train.properties.ModelArtifacts.S3ModelArtifacts,
         role=SAGEMAKER_ROLE_ARN,
         sagemaker_session=sess,
+    )
+    model_metrics = ModelMetrics(
+        model_quality=MetricsSource(
+            s3_uri=step_evaluate.properties.ProcessingOutputConfig.Outputs[
+                "evaluation"
+            ].S3Output.S3Uri
+            + "/model_quality.json",
+            content_type="application/json",
+        ),
     )
     step_register = RegisterModel(
         name="RegisterModeloA",
@@ -177,15 +281,88 @@ def build_pipeline():
         inference_instances=["ml.m5.large", "ml.m5.xlarge"],
         transform_instances=["ml.m5.large"],
         model_package_group_name=MODEL_PACKAGE_GROUP_NAME,
-        approval_status=model_approval_status,
+        approval_status="Approved",
+        model_metrics=model_metrics,
         description="BistroTech ml-native Modelo A (XGBoost) entrenado por SageMaker Pipeline.",
-        depends_on=[step_train],
+        depends_on=[step_evaluate],
+    )
+
+    # ── Step 6: Deploy condicional ───────────────────────────────────────────
+    deploy_processor = ScriptProcessor(
+        image_uri=_SKLEARN_IMAGE,
+        command=["python3"],
+        instance_type=PROCESSING_INSTANCE_TYPE,
+        instance_count=1,
+        role=SAGEMAKER_ROLE_ARN,
+        sagemaker_session=sess,
+        base_job_name="bistrotech-deploy-endpoint",
+    )
+    step_deploy = ProcessingStep(
+        name="DeployEndpoint",
+        processor=deploy_processor,
+        code="src/deploy_endpoint.py",
+        job_arguments=[
+            "--endpoint-name",
+            endpoint_name,
+            "--model-data-url",
+            step_train.properties.ModelArtifacts.S3ModelArtifacts,
+            "--image-uri",
+            _XGB_IMAGE,
+            "--role-arn",
+            SAGEMAKER_ROLE_ARN,
+            "--instance-type",
+            "ml.m5.large",
+        ],
+        depends_on=[step_register],
+    )
+    step_approve_and_deploy = ConditionStep(
+        name="ApproveAndDeployIfBetter",
+        conditions=[
+            ConditionLessThan(
+                left=JsonGet(
+                    step_name=step_evaluate.name,
+                    property_file=candidate_metrics_property,
+                    json_path="metrics.rmse",
+                ),
+                right=JsonGet(
+                    step_name=step_baseline.name,
+                    property_file=baseline_metrics_property,
+                    json_path="metrics.rmse",
+                ),
+            ),
+            ConditionLessThan(
+                left=JsonGet(
+                    step_name=step_evaluate.name,
+                    property_file=candidate_metrics_property,
+                    json_path="metrics.mae",
+                ),
+                right=JsonGet(
+                    step_name=step_baseline.name,
+                    property_file=baseline_metrics_property,
+                    json_path="metrics.mae",
+                ),
+            ),
+            ConditionGreaterThan(
+                left=JsonGet(
+                    step_name=step_evaluate.name,
+                    property_file=candidate_metrics_property,
+                    json_path="metrics.pearson",
+                ),
+                right=JsonGet(
+                    step_name=step_baseline.name,
+                    property_file=baseline_metrics_property,
+                    json_path="metrics.pearson",
+                ),
+            ),
+        ],
+        if_steps=[step_register, step_deploy],
+        else_steps=[],
     )
 
     pipeline = Pipeline(
         name=PIPELINE_NAME,
-        parameters=[input_data_uri, model_approval_status],
-        steps=[step_features, step_train, step_register],
+        parameters=[input_data_uri, endpoint_name],
+        steps=[step_features, step_train, step_baseline, step_evaluate, step_approve_and_deploy],
         sagemaker_session=sess,
     )
     return pipeline
