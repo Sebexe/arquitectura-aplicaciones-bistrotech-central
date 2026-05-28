@@ -71,7 +71,8 @@ def build_pipeline():
         from sagemaker.workflow.condition_step import ConditionStep
         from sagemaker.workflow.conditions import ConditionLessThan, ConditionGreaterThan
         from sagemaker.workflow.properties import PropertyFile
-        from sagemaker.workflow.functions import JsonGet
+        from sagemaker.workflow.functions import JsonGet, Join
+        from sagemaker.workflow.execution_variables import ExecutionVariables
         from sagemaker.workflow.step_collections import RegisterModel
         from sagemaker.workflow.parameters import ParameterString
         from sagemaker.processing import ScriptProcessor, ProcessingInput, ProcessingOutput
@@ -218,6 +219,13 @@ def build_pipeline():
         output_name="evaluation",
         path="evaluation.json",
     )
+    candidate_metrics_s3_uri = Join(
+        on="/",
+        values=[
+            f"s3://{S3_BUCKET}/metrics/candidate",
+            ExecutionVariables.PIPELINE_EXECUTION_ID,
+        ],
+    )
     step_evaluate = ProcessingStep(
         name="EvaluateCandidate",
         processor=eval_processor,
@@ -239,7 +247,7 @@ def build_pipeline():
         outputs=[
             ProcessingOutput(
                 source="/opt/ml/processing/evaluation",
-                destination=f"s3://{S3_BUCKET}/metrics/candidate/",
+                destination=candidate_metrics_s3_uri,
                 output_name="evaluation",
             )
         ],
@@ -266,10 +274,14 @@ def build_pipeline():
     )
     model_metrics = ModelMetrics(
         model_quality=MetricsSource(
-            s3_uri=step_evaluate.properties.ProcessingOutputConfig.Outputs[
-                "evaluation"
-            ].S3Output.S3Uri
-            + "/model_quality.json",
+            s3_uri=Join(
+                on="/",
+                values=[
+                    f"s3://{S3_BUCKET}/metrics/candidate",
+                    ExecutionVariables.PIPELINE_EXECUTION_ID,
+                    "model_quality.json",
+                ],
+            ),
             content_type="application/json",
         ),
     )
