@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 import json
 import logging
+import argparse
 import numpy as np
 import pandas as pd
 import joblib
@@ -49,7 +50,12 @@ def aggregate_mesa_scores(per_comensal_scores: list[dict]) -> list[dict]:
     ]
 
 
-def train(raw_csv: str = "data/raw/reservas.csv") -> dict:
+def train(
+    raw_csv: str = "data/raw/reservas.csv",
+    n_estimators: int = 300,
+    max_depth: int = 4,
+    learning_rate: float = 0.05,
+) -> dict:
     """
     Entrena el Modelo A desde cero.
 
@@ -84,9 +90,9 @@ def train(raw_csv: str = "data/raw/reservas.csv") -> dict:
 
     model = XGBRegressor(
         objective="reg:squarederror",
-        n_estimators=300,
-        max_depth=4,
-        learning_rate=0.05,
+        n_estimators=n_estimators,
+        max_depth=max_depth,
+        learning_rate=learning_rate,
         early_stopping_rounds=20,
         eval_metric="rmse",
         random_state=42,
@@ -121,5 +127,114 @@ def train(raw_csv: str = "data/raw/reservas.csv") -> dict:
     return metrics
 
 
+def train_from_processed(
+    processed_path: str = "data/processed/",
+    n_estimators: int = 300,
+    max_depth: int = 4,
+    learning_rate: float = 0.05,
+) -> dict:
+    """
+    Entrena el Modelo A usando artefactos procesados (X.joblib + targets.joblib).
+    """
+    os.makedirs("models", exist_ok=True)
+
+    logger.info("Cargando datos procesados desde %s", processed_path)
+    X_base, targets = load_processed(processed_path)
+
+    # En training de SageMaker no llega el CSV crudo con id_mozo, por eso
+    # entrenamos sin esa feature en este modo.
+    idx = targets["propina_rate"].index
+    X_a = X_base.loc[idx].copy()
+    y = targets["propina_rate"]
+
+    feature_names = list(X_a.columns)
+    logger.info("Features Modelo A (%d): %s", len(feature_names), feature_names)
+
+    X_train, X_test, y_train, y_test = train_test_split(
+        X_a, y, test_size=0.20, random_state=42
+    )
+
+    model = XGBRegressor(
+        objective="reg:squarederror",
+        n_estimators=n_estimators,
+        max_depth=max_depth,
+        learning_rate=learning_rate,
+        early_stopping_rounds=20,
+        eval_metric="rmse",
+        random_state=42,
+        n_jobs=-1,
+    )
+
+    logger.info("Entrenando XGBRegressor — train=%d, test=%d", len(X_train), len(X_test))
+    model.fit(
+        X_train,
+        y_train,
+        eval_set=[(X_test, y_test)],
+        verbose=False,
+    )
+
+    metrics = evaluate_modelo_a(model, X_test, y_test.values)
+
+    joblib.dump(model, MODEL_PATH)
+    logger.info("Modelo guardado en %s", MODEL_PATH)
+
+    with open(FEATURE_NAMES_PATH, "w") as f:
+        json.dump(feature_names, f, indent=2)
+    logger.info("Feature names guardados en %s", FEATURE_NAMES_PATH)
+
+    print(f"\n{'='*55}")
+    print(f"Modelo A entrenado (processed) — {model.best_iteration} árboles efectivos")
+    print(f"  RMSE     : {metrics['rmse']:.4f}")
+    print(f"  MAE      : {metrics['mae']:.4f}")
+    print(f"  Pearson  : {metrics['pearson']:.4f}")
+    print(f"  Modelo   : {MODEL_PATH}")
+    print(f"{'='*55}\n")
+
+    return metrics
+
+
 if __name__ == "__main__":
-    metrics = train()
+    parser = argparse.ArgumentParser(description="Entrenamiento Modelo A (local/SageMaker)")
+    parser.add_argument("--raw-csv", type=str, default="data/raw/reservas.csv")
+    parser.add_argument("--processed-path", type=str, default="")
+    parser.add_argument("--max-depth", type=int, default=4)
+    parser.add_argument("--n-estimators", type=int, default=300)
+    parser.add_argument("--learning-rate", type=float, default=0.05)
+    args = parser.parse_args()
+
+    # Rutas estándar en SageMaker Training
+    sm_train_channel = os.environ.get("SM_CHANNEL_TRAIN", "")
+    sm_model_dir = os.environ.get("SM_MODEL_DIR", "")
+    if sm_model_dir:
+        os.makedirs(sm_model_dir, exist_ok=True)
+        MODEL_PATH = os.path.join(sm_model_dir, "modelo_a_mozo.joblib")
+        FEATURE_NAMES_PATH = os.path.join(sm_model_dir, "feature_names_a.json")
+
+    processed_candidates = []
+    if args.processed_path:
+        processed_candidates.append(args.processed_path)
+    if sm_train_channel:
+        processed_candidates.append(sm_train_channel)
+
+    chosen_processed = ""
+    for candidate in processed_candidates:
+        if os.path.exists(os.path.join(candidate, "X.joblib")) and os.path.exists(
+            os.path.join(candidate, "targets.joblib")
+        ):
+            chosen_processed = candidate
+            break
+
+    if chosen_processed:
+        metrics = train_from_processed(
+            processed_path=chosen_processed,
+            n_estimators=args.n_estimators,
+            max_depth=args.max_depth,
+            learning_rate=args.learning_rate,
+        )
+    else:
+        metrics = train(
+            raw_csv=args.raw_csv,
+            n_estimators=args.n_estimators,
+            max_depth=args.max_depth,
+            learning_rate=args.learning_rate,
+        )
