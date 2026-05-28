@@ -17,8 +17,14 @@ import joblib
 from xgboost import XGBRegressor
 from sklearn.model_selection import train_test_split
 
-from src.feature_engineering import load_processed, build_features
-from src.evaluate import evaluate_modelo_a
+try:
+    # Ejecucion local como paquete: python -m src.train_modelo_a
+    from src.feature_engineering import load_processed, build_features
+    from src.evaluate import evaluate_modelo_a
+except ModuleNotFoundError:
+    # Ejecucion en SageMaker: python -m train_modelo_a (source_dir=src)
+    from feature_engineering import load_processed, build_features
+    from evaluate import evaluate_modelo_a
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)

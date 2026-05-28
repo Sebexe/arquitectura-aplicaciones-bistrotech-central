@@ -13,8 +13,14 @@ from xgboost import XGBClassifier
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
 
-from src.feature_engineering import load_processed, build_features
-from src.evaluate import evaluate_modelo_b
+try:
+    # Ejecucion local como paquete: python -m src.train_modelo_b
+    from src.feature_engineering import load_processed, build_features
+    from src.evaluate import evaluate_modelo_b
+except ModuleNotFoundError:
+    # Ejecucion en SageMaker: python -m train_modelo_b (source_dir=src)
+    from feature_engineering import load_processed, build_features
+    from evaluate import evaluate_modelo_b
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
