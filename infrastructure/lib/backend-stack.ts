@@ -8,6 +8,7 @@ import * as apigatewayv2 from 'aws-cdk-lib/aws-apigatewayv2';
 import * as integrations from 'aws-cdk-lib/aws-apigatewayv2-integrations';
 import * as route53 from 'aws-cdk-lib/aws-route53';
 import * as targets from 'aws-cdk-lib/aws-route53-targets';
+import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as path from 'path';
 // import * as sqs from 'aws-cdk-lib/aws-sqs';
 
@@ -20,6 +21,14 @@ export class BackendStack extends cdk.Stack {
     const apiRecordName = apiDomainName.endsWith(`.${hostedZoneDomainName}`)
       ? apiDomainName.slice(0, -(hostedZoneDomainName.length + 1))
       : apiDomainName;
+    const pedidosTableName = 'bistrotech-pedidos';
+
+    const dynamoDumpBucket = new s3.Bucket(this, 'DynamoDumpBucket', {
+      bucketName: `dynamo-dump-${this.account}`,
+      blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+      encryption: s3.BucketEncryption.S3_MANAGED,
+      enforceSSL: true,
+    });
 
     const mesasTable = new dynamodb.Table(this, 'MesasTable', {
       partitionKey: { name: 'id_mesa', type: dynamodb.AttributeType.NUMBER },
@@ -39,6 +48,33 @@ export class BackendStack extends cdk.Stack {
       tableName: 'bistrotech-registros',
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
     });
+
+    const pedidosTable = new dynamodb.Table(this, 'PedidosTable', {
+      partitionKey: { name: 'id_pedido', type: dynamodb.AttributeType.STRING },
+      tableName: pedidosTableName,
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      pointInTimeRecoverySpecification: {
+        pointInTimeRecoveryEnabled: true,
+      },
+    });
+
+    dynamoDumpBucket.addToResourcePolicy(new iam.PolicyStatement({
+      principals: [new iam.ServicePrincipal('dynamodb.amazonaws.com')],
+      actions: [
+        's3:AbortMultipartUpload',
+        's3:PutObject',
+        's3:PutObjectAcl',
+      ],
+      resources: [dynamoDumpBucket.arnForObjects('*')],
+      conditions: {
+        StringEquals: {
+          'aws:SourceAccount': this.account,
+        },
+        ArnLike: {
+          'aws:SourceArn': `arn:${cdk.Aws.PARTITION}:dynamodb:${this.region}:${this.account}:table/${pedidosTableName}`,
+        },
+      },
+    }));
 
     const clientesHistoricoTable = new dynamodb.Table(this, 'ClientesHistoricoTable', {
       partitionKey: { name: 'id_cliente', type: dynamodb.AttributeType.NUMBER },
@@ -138,7 +174,15 @@ export class BackendStack extends cdk.Stack {
       value: `https://${apiDomainName}`,
     });
 
-    for (const table of [mesasTable, reservasTable, registrosTable, clientesHistoricoTable, segmentosReferenciaTable]) {
+    new cdk.CfnOutput(this, 'DynamoDumpBucketName', {
+      value: dynamoDumpBucket.bucketName,
+    });
+
+    new cdk.CfnOutput(this, 'PedidosTableArn', {
+      value: pedidosTable.tableArn,
+    });
+
+    for (const table of [mesasTable, reservasTable, registrosTable, pedidosTable, clientesHistoricoTable, segmentosReferenciaTable]) {
       table.grantReadWriteData(backendLambda);
     }
 
