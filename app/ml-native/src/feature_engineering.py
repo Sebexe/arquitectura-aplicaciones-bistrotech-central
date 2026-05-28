@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 import logging
+import argparse
 import numpy as np
 import pandas as pd
 import joblib
@@ -334,16 +335,39 @@ def load_processed(path: str = "data/processed/") -> tuple:
     return X, targets
 
 
-if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
-    from src.generate_dataset import generate
+def _run_cli(input_path: str, output_path: str) -> None:
+    """Ejecuta feature engineering desde CLI (compatible con SageMaker Processing)."""
+    logger.info("Leyendo dataset desde %s", input_path)
+    df_raw = pd.read_csv(input_path)
 
-    df = generate(1000)
-    X, targets = build_features(df)
+    X, targets = build_features(df_raw)
+    save_processed(X, targets, path=output_path)
+
     print(f"X shape: {X.shape}")
     print(f"Columnas X: {list(X.columns)}")
     for k, v in targets.items():
         print(f"  target '{k}': {len(v)} registros")
-    save_processed(X, targets)
-    X2, targets2 = load_processed()
-    print(f"Load OK — X shape: {X2.shape}")
+    print(f"[OK] Artefactos guardados en: {output_path}")
+
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+
+    parser = argparse.ArgumentParser(
+        description="Feature engineering BistroTech (local/SageMaker Processing)."
+    )
+    parser.add_argument(
+        "--input-path",
+        type=str,
+        default="data/raw/reservas.csv",
+        help="Ruta del CSV de entrada con datos crudos.",
+    )
+    parser.add_argument(
+        "--output-path",
+        type=str,
+        default="data/processed/",
+        help="Directorio de salida para artefactos procesados.",
+    )
+    args = parser.parse_args()
+
+    _run_cli(args.input_path, args.output_path)
