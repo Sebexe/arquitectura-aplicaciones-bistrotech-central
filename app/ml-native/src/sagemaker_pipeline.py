@@ -273,7 +273,7 @@ def build_pipeline():
         sagemaker_session=sess,
     )
     model_metrics = ModelMetrics(
-        model_quality=MetricsSource(
+        model_statistics=MetricsSource(
             s3_uri=Join(
                 on="/",
                 values=[
