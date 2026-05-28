@@ -25,8 +25,11 @@ PIPELINE_NAME = "bistrotech-native-retrain-pipeline"
 SAGEMAKER_ROLE_ARN = os.environ.get("SAGEMAKER_ROLE_ARN", "")
 S3_BUCKET = os.environ.get("S3_BUCKET", "")
 AWS_REGION = os.environ.get("AWS_REGION", "us-east-1")
-INSTANCE_TYPE = os.environ.get("SM_INSTANCE_TYPE", "ml.t3.medium")
+# Para procesamiento (Paso 1) dejamos la t3.medium que ya vimos que funciona
+PROCESSING_INSTANCE_TYPE = os.environ.get("SM_PROCESSING_INSTANCE_TYPE", "ml.t3.medium")
 
+# Para entrenamiento (Paso 2) probamos la m5.xlarge que suele tener cuota libre
+TRAINING_INSTANCE_TYPE = os.environ.get("SM_TRAINING_INSTANCE_TYPE", "ml.m5.xlarge")
 # Imágenes ECR gestionadas por AWS para sklearn y xgboost
 _SKLEARN_IMAGE = f"683313688378.dkr.ecr.{AWS_REGION}.amazonaws.com/sagemaker-scikit-learn:1.2-1-cpu-py3"
 _XGB_IMAGE = f"683313688378.dkr.ecr.{AWS_REGION}.amazonaws.com/sagemaker-xgboost:1.7-1"
@@ -83,7 +86,7 @@ def build_pipeline():
     processor = ScriptProcessor(
         image_uri=_SKLEARN_IMAGE,
         command=["python3"],
-        instance_type=INSTANCE_TYPE,
+        instance_type=PROCESSING_INSTANCE_TYPE,
         instance_count=1,
         role=SAGEMAKER_ROLE_ARN,
         sagemaker_session=sess,
@@ -119,7 +122,7 @@ def build_pipeline():
     estimator = Estimator(
         image_uri=_XGB_IMAGE,
         role=SAGEMAKER_ROLE_ARN,
-        instance_type=INSTANCE_TYPE,
+        instance_type=TRAINING_INSTANCE_TYPE,
         instance_count=1,
         output_path=f"s3://{S3_BUCKET}/models/",
         sagemaker_session=sess,
