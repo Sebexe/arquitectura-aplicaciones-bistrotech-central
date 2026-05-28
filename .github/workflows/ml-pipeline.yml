@@ -40,7 +40,25 @@ jobs:
 
       - name: Deploy ML Infrastructure Stack
         working-directory: infrastructure
-        run: npx cdk deploy MachineLearningStack --require-approval never --outputs-file cdk-outputs.json
+        run: |
+          # --outputs-file siempre genera el archivo, incluso si no hay cambios
+          npx cdk deploy MachineLearningStack --require-approval never --outputs-file cdk-outputs.json
+          # Si el stack ya existía y no hubo cambios, CDK puede no regenerar el archivo.
+          # En ese caso, lo obtenemos directamente de CloudFormation.
+          if [ ! -f cdk-outputs.json ] || [ ! -s cdk-outputs.json ]; then
+            echo "cdk-outputs.json vacío o inexistente, consultando CloudFormation..."
+            aws cloudformation describe-stacks \
+              --stack-name MachineLearningStack \
+              --query 'Stacks[0].Outputs' \
+              --output json > raw-outputs.json
+            python3 -c "
+import json
+with open('raw-outputs.json') as f: outputs = json.load(f)
+result = {'MachineLearningStack': {o['OutputKey']: o['OutputValue'] for o in outputs}}
+with open('cdk-outputs.json', 'w') as f: json.dump(result, f)
+print('cdk-outputs.json generado desde CloudFormation')
+"
+          fi
 
       # Leer outputs del CDK para pasarlos al pipeline de ML
       - name: Extract CDK outputs
@@ -49,8 +67,19 @@ jobs:
         run: |
           BUCKET=$(jq -r '.MachineLearningStack.MlBucketName' cdk-outputs.json)
           ROLE=$(jq -r '.MachineLearningStack.SageMakerRoleArn' cdk-outputs.json)
+          # Validar que no sean null o vacíos
+          if [ "$BUCKET" = "null" ] || [ -z "$BUCKET" ]; then
+            echo "ADVERTENCIA: MlBucketName no encontrado en outputs, usando secret"
+            BUCKET="${{ secrets.S3_BUCKET }}"
+          fi
+          if [ "$ROLE" = "null" ] || [ -z "$ROLE" ]; then
+            echo "ADVERTENCIA: SageMakerRoleArn no encontrado en outputs, usando secret"
+            ROLE="${{ secrets.SAGEMAKER_ROLE_ARN }}"
+          fi
           echo "S3_BUCKET=$BUCKET" >> $GITHUB_ENV
           echo "SAGEMAKER_ROLE_ARN=$ROLE" >> $GITHUB_ENV
+          echo "Bucket: $BUCKET"
+          echo "Role ARN: $ROLE"
 
       # Configuración de Python para ejecutar y verificar los tests del pipeline de ML
       - name: Set up Python
@@ -73,8 +102,4 @@ jobs:
       # del pipeline de reentrenamiento en SageMaker (usa SAGEMAKER_ROLE_ARN y S3_BUCKET del entorno)
       - name: Run pipeline & register SageMaker retraining pipeline
         working-directory: app/ml-native
-        env:
-          AWS_REGION: ${{ env.AWS_REGION }}
-          SAGEMAKER_ROLE_ARN: ${{ env.SAGEMAKER_ROLE_ARN }}
-          S3_BUCKET: ${{ env.S3_BUCKET }}
         run: python run_pipeline.py
